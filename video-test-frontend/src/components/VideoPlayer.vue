@@ -28,6 +28,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
+import JSMpeg from 'jsmpeg'
 
 // 声明全局JSMpeg类型
 declare global {
@@ -72,18 +73,21 @@ const connectToVideoStream = () => {
       isConnected.value = true
       isConnecting.value = false
       
-      if (videoCanvas.value && window.JSMpeg) {
-        // 使用全局JSMpeg对象
-        player = new window.JSMpeg.Player(null, {
-          canvas: videoCanvas.value,
-          autoplay: true,
-          audio: false,
-          loop: false,
-          streaming: true
-        })
-      } else if (!window.JSMpeg) {
-        console.error('JSMpeg未加载')
-        connectionStatus.value = 'error'
+      if (videoCanvas.value) {
+        // 使用导入的JSMpeg
+        try {
+          player = new JSMpeg.Player(null, {
+            canvas: videoCanvas.value,
+            autoplay: true,
+            audio: false,
+            loop: false,
+            streaming: true
+          })
+          console.log('JSMpeg Player创建成功')
+        } catch (error) {
+          console.error('JSMpeg Player创建失败:', error)
+          connectionStatus.value = 'error'
+        }
       }
     }
     
