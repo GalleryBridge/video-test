@@ -27,9 +27,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-// @ts-ignore
-import JSMpeg from 'jsmpeg'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+
+// 声明全局JSMpeg类型
+declare global {
+  interface Window {
+    JSMpeg: any;
+  }
+}
 
 const videoCanvas = ref<HTMLCanvasElement>()
 const connectionStatus = ref<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected')
@@ -67,14 +72,18 @@ const connectToVideoStream = () => {
       isConnected.value = true
       isConnecting.value = false
       
-      if (videoCanvas.value) {
-        player = new JSMpeg.Player(null, {
+      if (videoCanvas.value && window.JSMpeg) {
+        // 使用全局JSMpeg对象
+        player = new window.JSMpeg.Player(null, {
           canvas: videoCanvas.value,
           autoplay: true,
           audio: false,
           loop: false,
           streaming: true
         })
+      } else if (!window.JSMpeg) {
+        console.error('JSMpeg未加载')
+        connectionStatus.value = 'error'
       }
     }
     
@@ -143,8 +152,6 @@ onUnmounted(() => {
   disconnectFromVideoStream()
 })
 
-// 添加 computed 导入
-import { computed } from 'vue'
 </script>
 
 <style scoped>
