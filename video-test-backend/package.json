@@ -1,0 +1,19 @@
+{
+  "name": "video-test-rtsp-server",
+  "version": "1.0.0",
+  "description": "RTSP to WebSocket streaming server",
+  "main": "src/main/js/rtsp-server.js",
+  "scripts": {
+    "start": "node src/main/js/rtsp-server.js",
+    "dev": "nodemon src/main/js/rtsp-server.js"
+  },
+  "dependencies": {
+    "node-rtsp-stream": "^0.0.9"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  },
+  "keywords": ["rtsp", "websocket", "streaming", "ffmpeg"],
+  "author": "",
+  "license": "MIT"
+} 

@@ -10,25 +10,24 @@ def start_video():
         "-rtsp_transport", "tcp",
         "-i", "rtsp://admin:zky2025...@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0",
 
-        # 视频处理参数
-        "-vcodec", "libx264",      # 使用H.264编码器
-        "-preset", "ultrafast",    # 最快编码预设，减少延迟
+        # JSMpeg专用编码参数
+        "-vcodec", "mpeg1video",   # JSMpeg专用：使用MPEG-1视频编码器
+        "-preset", "ultrafast",    # 最快编码预设
         "-tune", "zerolatency",    # 零延迟调优
-        "-crf", "23",              # 恒定质量因子
-        "-maxrate", "1M",          # 最大比特率1Mbps
-        "-bufsize", "2M",          # 缓冲区大小
-        "-g", "30",                # GOP大小（关键帧间隔）
-        "-keyint_min", "30",       # 最小关键帧间隔
+        "-qscale:v", "5",          # 使用质量级别而不是CRF
+        "-maxrate", "1000k",       # 最大比特率
+        "-bufsize", "1000k",       # 缓冲区大小
+        "-g", "15",                # GOP大小，减少延迟
+        "-keyint_min", "15",       # 最小关键帧间隔
 
         # 分辨率和帧率
         "-s", "640x480",           # 分辨率
         "-r", "15",                # 帧率15fps
 
-        # 输出格式：MPEG-TS流
-        "-f", "mpegts",            # 输出MPEG-TS格式，兼容JSMpeg解码器
-        "-muxrate", "1M",          # 复用码率
-        "-pcr_period", "20",       # PCR间隔
-        "-pat_period", "0.1",      # PAT周期
+        # JSMpeg专用输出格式
+        "-f", "mpegts",            # 输出MPEG-TS格式
+        "-muxrate", "1000k",       # 复用码率
+        "-muxdelay", "0.001",      # 复用延迟
         "-an",                     # 禁用音频
         "pipe:1"                   # 输出到stdout
     ]
