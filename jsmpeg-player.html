@@ -417,7 +417,7 @@
             }
 
             getWebSocketUrl() {
-                return `ws://${this.serverHost.value}:${this.serverPort.value}/video`;
+                return `ws://${this.serverHost.value}:${this.serverPort.value}`;
             }
 
             updateUrlDisplay() {
@@ -489,78 +489,49 @@
                 
                 try {
                     const wsUrl = this.getWebSocketUrl();
-                    this.webSocket = new WebSocket(wsUrl);
-                    this.webSocket.binaryType = 'arraybuffer';
+                    this.log(`🔗 创建JSMpeg播放器: ${wsUrl}`);
                     
-                    this.webSocket.onopen = () => {
-                        this.log('WebSocket连接成功');
-                        this.setConnectionStatus('connected');
-                        this.isConnected = true;
-                        this.isConnecting = false;
-                        this.updateButtons();
-                        
-                        // 重置统计数据
-                        this.stats.bytesReceived = 0;
-                        this.stats.packetsReceived = 0;
-                        this.stats.connectionStartTime = Date.now();
-                        
-                        // 创建JSMpeg播放器
-                        if (typeof JSMpeg !== 'undefined') {
-                            try {
-                                this.player = new JSMpeg.Player(this.webSocket, {
-                                    canvas: this.canvas,
-                                    autoplay: true,
-                                    audio: false,
-                                    loop: false,
-                                    streaming: true
-                                });
-                                this.log('JSMpeg播放器创建成功');
-                            } catch (error) {
-                                this.log('❌ JSMpeg播放器创建失败: ' + error.message);
-                                                                 // 尝试备用初始化方法
-                                 try {
-                                     this.player = new JSMpeg.Player(this.getWebSocketUrl(), {
-                                         canvas: this.canvas,
-                                         audio: false,
-                                         streaming: true,
-                                         autoplay: true
-                                     });
-                                     this.log('✅ 使用备用方法创建JSMpeg播放器');
-                                 } catch (error2) {
-                                     this.log('❌ 备用方法也失败: ' + error2.message);
-                                 }
-                            }
-                        } else {
-                            this.log('❌ JSMpeg库不可用');
-                        }
-                    };
+                    // 重置统计数据
+                    this.stats.bytesReceived = 0;
+                    this.stats.packetsReceived = 0;
+                    this.stats.connectionStartTime = Date.now();
                     
-                    this.webSocket.onmessage = (event) => {
-                        if (event.data) {
-                            // 更新统计数据
-                            const uint8Array = new Uint8Array(event.data);
-                            this.stats.bytesReceived += uint8Array.length;
-                            this.stats.packetsReceived++;
+                    // 直接创建JSMpeg播放器，它会自己管理WebSocket
+                    if (typeof JSMpeg !== 'undefined') {
+                        try {
+                            this.player = new JSMpeg.Player(wsUrl, {
+                                canvas: this.canvas,
+                                audio: false,        // 确保禁用音频
+                                streaming: true,     // 流媒体模式
+                                autoplay: true,      // 自动播放
+                                loop: false
+                            });
+                            this.log('✅ JSMpeg播放器创建成功');
                             
-                            // 如果播放器存在且没有直接连接WebSocket，则手动写入数据
-                            if (this.player && typeof this.player.write === 'function') {
-                                this.player.write(uint8Array);
-                            }
+                            // 设置连接成功状态
+                            setTimeout(() => {
+                                this.setConnectionStatus('connected');
+                                this.isConnected = true;
+                                this.isConnecting = false;
+                                this.updateButtons();
+                                this.log('✅ 视频流连接建立');
+                            }, 1000);
+                            
+                            // 创建监控WebSocket来统计数据
+                            this.createMonitorWebSocket(wsUrl);
+                            
+                        } catch (error) {
+                            this.log('❌ JSMpeg播放器创建失败: ' + error.message);
+                            this.setConnectionStatus('error');
+                            this.isConnecting = false;
+                            this.updateButtons();
                         }
-                    };
-                    
-                    this.webSocket.onclose = (event) => {
-                        this.log(`WebSocket连接关闭 (代码: ${event.code})`);
-                        this.disconnectFromVideoStream();
-                    };
-                    
-                    this.webSocket.onerror = (error) => {
-                        this.log('WebSocket错误: ' + error);
+                    } else {
+                        this.log('❌ JSMpeg库不可用');
                         this.setConnectionStatus('error');
-                        this.isConnected = false;
                         this.isConnecting = false;
                         this.updateButtons();
-                    };
+                    }
                     
                 } catch (error) {
                     this.log('连接失败: ' + error.message);
@@ -569,19 +540,53 @@
                     this.updateButtons();
                 }
             }
+            
+            createMonitorWebSocket(wsUrl) {
+                // 创建一个用于监控的WebSocket连接
+                try {
+                    this.webSocket = new WebSocket(wsUrl);
+                    this.webSocket.binaryType = 'arraybuffer';
+                    
+                    this.webSocket.onopen = () => {
+                        this.log('📊 监控WebSocket连接成功');
+                    };
+                    
+                    this.webSocket.onmessage = (event) => {
+                        if (event.data && event.data instanceof ArrayBuffer) {
+                            // 只用于统计，不处理数据
+                            const uint8Array = new Uint8Array(event.data);
+                            this.stats.bytesReceived += uint8Array.length;
+                            this.stats.packetsReceived++;
+                        }
+                    };
+                    
+                    this.webSocket.onclose = () => {
+                        this.log('📊 监控WebSocket关闭');
+                    };
+                    
+                    this.webSocket.onerror = (error) => {
+                        this.log('📊 监控WebSocket错误: ' + error);
+                    };
+                    
+                } catch (error) {
+                    this.log('创建监控WebSocket失败: ' + error.message);
+                }
+            }
 
             disconnectFromVideoStream() {
                 this.log('断开视频流连接');
                 
-                if (this.webSocket) {
-                    this.webSocket.close();
-                    this.webSocket = null;
-                }
-                
+                // JSMpeg播放器会自己管理WebSocket连接
                 if (this.player) {
                     this.player.destroy();
                     this.player = null;
                     this.log('JSMpeg播放器已销毁');
+                }
+                
+                // 手动关闭我们的WebSocket（如果存在）
+                if (this.webSocket) {
+                    this.webSocket.close();
+                    this.webSocket = null;
                 }
                 
                 this.setConnectionStatus('disconnected');
