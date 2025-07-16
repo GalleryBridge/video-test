@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSMpeg视频流播放器 - 纯JavaScript版本</title>
+    <script src="jsmpeg.min.js"></script>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .video-container {
+            position: relative;
+            display: inline-block;
+            border: 3px solid #ddd;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #000;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 640px;
+        }
+
+        #videoCanvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            padding: 15px;
+            pointer-events: none;
+            color: white;
+            font-size: 14px;
+        }
+
+        .status-info {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .connection-status {
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .connected { color: #4CAF50; }
+        .connecting { color: #FF9800; }
+        .disconnected { color: #9E9E9E; }
+        .error { color: #F44336; }
+
+        .controls {
+            text-align: center;
+            margin: 25px 0;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+
+        .connect-btn {
+            background: linear-gradient(135deg, #4CAF50 0%, #45A049 100%);
+            color: white;
+        }
+
+        .connect-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #45A049 0%, #3D8B40 100%);
+            transform: translateY(-2px);
+        }
+
+        .disconnect-btn {
+            background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+            color: white;
+        }
+
+        .disconnect-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #d32f2f 0%, #c62828 100%);
+            transform: translateY(-2px);
+        }
+
+        .test-btn {
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            color: white;
+        }
+
+        .test-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #1976D2 0%, #1565C0 100%);
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            background: #BDBDBD !important;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .server-config {
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .server-config label {
+            font-weight: 600;
+            margin-right: 10px;
+            color: #495057;
+        }
+
+        .server-config input, .server-config select {
+            padding: 10px 15px;
+            border: 2px solid #ced4da;
+            border-radius: 6px;
+            background: white;
+            font-size: 14px;
+            margin: 0 5px;
+            transition: border-color 0.3s ease;
+        }
+
+        .server-config input:focus, .server-config select:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+        }
+
+        .info-panel {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .info-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #495057;
+            min-width: 150px;
+            margin-right: 10px;
+        }
+
+        .info-value {
+            color: #6c757d;
+        }
+
+        .url-value {
+            background: #e9ecef;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+
+        .log-panel {
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            padding: 15px;
+            border-radius: 8px;
+            height: 200px;
+            overflow-y: auto;
+            margin-top: 20px;
+            border: 1px solid #333;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+        }
+
+        .log-time {
+            color: #888;
+            margin-right: 10px;
+        }
+
+        .stats-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-item {
+            background: #f1f3f4;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2196F3;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            button {
+                width: 100%;
+                max-width: 250px;
+            }
+
+            .server-config {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 JSMpeg实时视频流播放器</h1>
+        
+        <div class="video-container">
+            <canvas id="videoCanvas" width="640" height="480"></canvas>
+            
+            <div class="video-overlay">
+                <div class="status-info">
+                    <div id="connectionStatus" class="connection-status disconnected">
+                        未连接
+                    </div>
+                    <div>分辨率: 640x480</div>
+                    <div>帧率: ~15fps</div>
+                    <div>编码: H.264/MPEG-TS</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="server-config">
+            <label for="serverHost">服务器地址:</label>
+            <input type="text" id="serverHost" value="192.168.1.196" placeholder="输入服务器IP">
+            <label for="serverPort">端口:</label>
+            <input type="number" id="serverPort" value="8103" min="1" max="65535">
+        </div>
+
+        <div class="controls">
+            <button id="connectBtn" class="connect-btn">连接视频流</button>
+            <button id="disconnectBtn" class="disconnect-btn" disabled>断开连接</button>
+            <button id="testBtn" class="test-btn">测试连接</button>
+        </div>
+
+        <div class="info-panel">
+            <div class="info-row">
+                <span class="info-label">WebSocket地址:</span>
+                <span id="wsUrl" class="info-value url-value">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">JSMpeg版本:</span>
+                <span class="info-value" id="jsmpegVersion">检测中...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">浏览器支持:</span>
+                <span id="browserSupport" class="info-value">检测中...</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">连接状态:</span>
+                <span id="connectionInfo" class="info-value">未连接</span>
+            </div>
+        </div>
+
+        <div class="stats-panel">
+            <div class="stat-item">
+                <div id="bytesReceived" class="stat-value">0</div>
+                <div class="stat-label">接收字节数</div>
+            </div>
+            <div class="stat-item">
+                <div id="packetsReceived" class="stat-value">0</div>
+                <div class="stat-label">接收包数</div>
+            </div>
+            <div class="stat-item">
+                <div id="connectionTime" class="stat-value">0</div>
+                <div class="stat-label">连接时长(秒)</div>
+            </div>
+            <div class="stat-item">
+                <div id="avgBandwidth" class="stat-value">0</div>
+                <div class="stat-label">平均带宽(KB/s)</div>
+            </div>
+        </div>
+
+        <div id="logPanel" class="log-panel">
+            <div class="log-entry">
+                <span class="log-time">[加载]</span>
+                <span>JSMpeg播放器已初始化</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class JSMpegPlayer {
+            constructor() {
+                this.canvas = document.getElementById('videoCanvas');
+                this.connectBtn = document.getElementById('connectBtn');
+                this.disconnectBtn = document.getElementById('disconnectBtn');
+                this.testBtn = document.getElementById('testBtn');
+                this.serverHost = document.getElementById('serverHost');
+                this.serverPort = document.getElementById('serverPort');
+                this.connectionStatusEl = document.getElementById('connectionStatus');
+                this.wsUrlEl = document.getElementById('wsUrl');
+                this.connectionInfoEl = document.getElementById('connectionInfo');
+                this.logPanel = document.getElementById('logPanel');
+                
+                this.webSocket = null;
+                this.player = null;
+                this.isConnected = false;
+                this.isConnecting = false;
+                
+                // 统计数据
+                this.stats = {
+                    bytesReceived: 0,
+                    packetsReceived: 0,
+                    connectionStartTime: 0
+                };
+                
+                this.init();
+            }
+
+            init() {
+                this.log('初始化JSMpeg播放器...');
+                
+                // 检查JSMpeg支持
+                this.checkJSMpegSupport();
+                
+                // 绑定事件
+                this.connectBtn.addEventListener('click', () => this.connectToVideoStream());
+                this.disconnectBtn.addEventListener('click', () => this.disconnectFromVideoStream());
+                this.testBtn.addEventListener('click', () => this.testConnection());
+                this.serverHost.addEventListener('input', () => this.updateUrlDisplay());
+                this.serverPort.addEventListener('input', () => this.updateUrlDisplay());
+                
+                // 初始化URL显示
+                this.updateUrlDisplay();
+                
+                // 启动统计更新
+                setInterval(() => this.updateStats(), 1000);
+                
+                this.log('JSMpeg播放器初始化完成');
+            }
+
+            checkJSMpegSupport() {
+                try {
+                    if (typeof JSMpeg !== 'undefined') {
+                        const version = JSMpeg.VERSION || 'unknown';
+                        document.getElementById('jsmpegVersion').textContent = version;
+                        document.getElementById('browserSupport').textContent = '✅ JSMpeg已加载';
+                        this.log('✅ JSMpeg库加载成功，版本: ' + version);
+                    } else {
+                        document.getElementById('browserSupport').textContent = '❌ JSMpeg未加载';
+                        this.log('❌ JSMpeg库未加载');
+                    }
+                } catch (error) {
+                    this.log('检查JSMpeg支持时出错: ' + error.message);
+                }
+            }
+
+            getWebSocketUrl() {
+                return `ws://${this.serverHost.value}:${this.serverPort.value}/video`;
+            }
+
+            updateUrlDisplay() {
+                const url = this.getWebSocketUrl();
+                this.wsUrlEl.textContent = url;
+            }
+
+            setConnectionStatus(status) {
+                this.connectionStatusEl.className = `connection-status ${status}`;
+                
+                switch (status) {
+                    case 'disconnected':
+                        this.connectionStatusEl.textContent = '未连接';
+                        this.connectionInfoEl.textContent = '未连接';
+                        break;
+                    case 'connecting':
+                        this.connectionStatusEl.textContent = '连接中...';
+                        this.connectionInfoEl.textContent = '正在连接...';
+                        break;
+                    case 'connected':
+                        this.connectionStatusEl.textContent = '已连接';
+                        this.connectionInfoEl.textContent = '连接正常';
+                        break;
+                    case 'error':
+                        this.connectionStatusEl.textContent = '连接错误';
+                        this.connectionInfoEl.textContent = '连接失败';
+                        break;
+                }
+            }
+
+            updateButtons() {
+                this.connectBtn.disabled = this.isConnected || this.isConnecting;
+                this.disconnectBtn.disabled = !this.isConnected && !this.isConnecting;
+                this.testBtn.disabled = this.isConnecting;
+            }
+
+            log(message) {
+                const now = new Date();
+                const time = now.toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                logEntry.innerHTML = `<span class="log-time">[${time}]</span><span>${message}</span>`;
+                
+                this.logPanel.appendChild(logEntry);
+                this.logPanel.scrollTop = this.logPanel.scrollHeight;
+                
+                console.log(`[JSMpeg Player] ${message}`);
+            }
+
+            updateStats() {
+                if (this.isConnected && this.stats.connectionStartTime > 0) {
+                    const connectionTime = Math.floor((Date.now() - this.stats.connectionStartTime) / 1000);
+                    const avgBandwidth = connectionTime > 0 ? Math.floor(this.stats.bytesReceived / connectionTime / 1024) : 0;
+                    
+                    document.getElementById('bytesReceived').textContent = this.stats.bytesReceived.toLocaleString();
+                    document.getElementById('packetsReceived').textContent = this.stats.packetsReceived.toLocaleString();
+                    document.getElementById('connectionTime').textContent = connectionTime;
+                    document.getElementById('avgBandwidth').textContent = avgBandwidth;
+                }
+            }
+
+            connectToVideoStream() {
+                if (this.isConnected || this.isConnecting) return;
+                
+                this.log('开始连接视频流...');
+                this.setConnectionStatus('connecting');
+                this.isConnecting = true;
+                this.updateButtons();
+                
+                try {
+                    const wsUrl = this.getWebSocketUrl();
+                    this.webSocket = new WebSocket(wsUrl);
+                    this.webSocket.binaryType = 'arraybuffer';
+                    
+                    this.webSocket.onopen = () => {
+                        this.log('WebSocket连接成功');
+                        this.setConnectionStatus('connected');
+                        this.isConnected = true;
+                        this.isConnecting = false;
+                        this.updateButtons();
+                        
+                        // 重置统计数据
+                        this.stats.bytesReceived = 0;
+                        this.stats.packetsReceived = 0;
+                        this.stats.connectionStartTime = Date.now();
+                        
+                        // 创建JSMpeg播放器
+                        if (typeof JSMpeg !== 'undefined') {
+                            try {
+                                this.player = new JSMpeg.Player(this.webSocket, {
+                                    canvas: this.canvas,
+                                    autoplay: true,
+                                    audio: false,
+                                    loop: false,
+                                    streaming: true
+                                });
+                                this.log('JSMpeg播放器创建成功');
+                            } catch (error) {
+                                this.log('❌ JSMpeg播放器创建失败: ' + error.message);
+                                                                 // 尝试备用初始化方法
+                                 try {
+                                     this.player = new JSMpeg.Player(this.getWebSocketUrl(), {
+                                         canvas: this.canvas,
+                                         audio: false,
+                                         streaming: true,
+                                         autoplay: true
+                                     });
+                                     this.log('✅ 使用备用方法创建JSMpeg播放器');
+                                 } catch (error2) {
+                                     this.log('❌ 备用方法也失败: ' + error2.message);
+                                 }
+                            }
+                        } else {
+                            this.log('❌ JSMpeg库不可用');
+                        }
+                    };
+                    
+                    this.webSocket.onmessage = (event) => {
+                        if (event.data) {
+                            // 更新统计数据
+                            const uint8Array = new Uint8Array(event.data);
+                            this.stats.bytesReceived += uint8Array.length;
+                            this.stats.packetsReceived++;
+                            
+                            // 如果播放器存在且没有直接连接WebSocket，则手动写入数据
+                            if (this.player && typeof this.player.write === 'function') {
+                                this.player.write(uint8Array);
+                            }
+                        }
+                    };
+                    
+                    this.webSocket.onclose = (event) => {
+                        this.log(`WebSocket连接关闭 (代码: ${event.code})`);
+                        this.disconnectFromVideoStream();
+                    };
+                    
+                    this.webSocket.onerror = (error) => {
+                        this.log('WebSocket错误: ' + error);
+                        this.setConnectionStatus('error');
+                        this.isConnected = false;
+                        this.isConnecting = false;
+                        this.updateButtons();
+                    };
+                    
+                } catch (error) {
+                    this.log('连接失败: ' + error.message);
+                    this.setConnectionStatus('error');
+                    this.isConnecting = false;
+                    this.updateButtons();
+                }
+            }
+
+            disconnectFromVideoStream() {
+                this.log('断开视频流连接');
+                
+                if (this.webSocket) {
+                    this.webSocket.close();
+                    this.webSocket = null;
+                }
+                
+                if (this.player) {
+                    this.player.destroy();
+                    this.player = null;
+                    this.log('JSMpeg播放器已销毁');
+                }
+                
+                this.setConnectionStatus('disconnected');
+                this.isConnected = false;
+                this.isConnecting = false;
+                this.updateButtons();
+                
+                // 重置统计数据显示
+                document.getElementById('bytesReceived').textContent = '0';
+                document.getElementById('packetsReceived').textContent = '0';
+                document.getElementById('connectionTime').textContent = '0';
+                document.getElementById('avgBandwidth').textContent = '0';
+            }
+
+            async testConnection() {
+                this.log('测试WebSocket连接...');
+                
+                try {
+                    const wsUrl = this.getWebSocketUrl();
+                    const testSocket = new WebSocket(wsUrl);
+                    
+                    testSocket.onopen = () => {
+                        this.log('✅ 连接测试成功');
+                        testSocket.close();
+                    };
+                    
+                    testSocket.onerror = (error) => {
+                        this.log('❌ 连接测试失败: ' + error);
+                    };
+                    
+                    testSocket.onclose = (event) => {
+                        if (event.code === 1000) {
+                            this.log('测试连接正常关闭');
+                        }
+                    };
+                    
+                } catch (error) {
+                    this.log('❌ 测试连接异常: ' + error.message);
+                }
+            }
+        }
+
+        // 页面加载完成后初始化播放器
+        document.addEventListener('DOMContentLoaded', () => {
+            window.jsmpegPlayer = new JSMpegPlayer();
+        });
+    </script>
+</body>
+</html> 
