@@ -141,6 +141,14 @@
                 <div id="latency" class="stat-value">0</div>
                 <div class="stat-label">延迟(ms)</div>
             </div>
+            <div class="stat-item">
+                <div id="heartbeat" class="stat-value">⏳</div>
+                <div class="stat-label">心跳状态</div>
+            </div>
+            <div class="stat-item">
+                <div id="packets" class="stat-value">0</div>
+                <div class="stat-label">数据包数</div>
+            </div>
         </div>
         
         <div id="log" class="log"></div>
@@ -166,7 +174,12 @@
                     frameCount: 0,
                     dataReceived: 0,
                     startTime: 0,
-                    lastFrameTime: 0
+                    lastFrameTime: 0,
+                    lastDataTime: 0,        // 最后收到数据的时间
+                    dataPacketCount: 0,     // 数据包计数
+                    heartbeatStatus: 'waiting',  // 心跳状态
+                    avgPacketSize: 0,       // 平均包大小
+                    decodingErrors: 0       // 解码错误计数
                 };
                 
                 this.init();
@@ -185,8 +198,9 @@
                     this.log('❌ JSMpeg库未加载');
                 }
                 
-                // 启动统计更新
+                // 启动统计更新和心跳检测
                 setInterval(() => this.updateStats(), 1000);
+                setInterval(() => this.checkHeartbeat(), 2000);  // 每2秒检查心跳
             }
 
             log(message) {
@@ -218,10 +232,84 @@
                 document.getElementById('frameCount').textContent = this.stats.frameCount;
                 document.getElementById('dataReceived').textContent = Math.round(this.stats.dataReceived / 1024);
                 document.getElementById('frameRate').textContent = fps;
+                document.getElementById('packets').textContent = this.stats.dataPacketCount;
                 
                 // 计算延迟 (基于最后一帧的时间)
                 const latency = this.stats.lastFrameTime > 0 ? now - this.stats.lastFrameTime : 0;
                 document.getElementById('latency').textContent = latency;
+                
+                // 更新心跳显示
+                const heartbeatEl = document.getElementById('heartbeat');
+                switch(this.stats.heartbeatStatus) {
+                    case 'strong':
+                        heartbeatEl.textContent = '💚';
+                        heartbeatEl.style.color = '#28a745';
+                        break;
+                    case 'weak':
+                        heartbeatEl.textContent = '💛';
+                        heartbeatEl.style.color = '#ffc107';
+                        break;
+                    case 'dead':
+                        heartbeatEl.textContent = '💀';
+                        heartbeatEl.style.color = '#dc3545';
+                        break;
+                    default:
+                        heartbeatEl.textContent = '⏳';
+                        heartbeatEl.style.color = '#6c757d';
+                }
+                
+                // 显示心跳状态
+                this.updateHeartbeatDisplay();
+            }
+
+            checkHeartbeat() {
+                if (!this.isConnected) return;
+                
+                const now = Date.now();
+                
+                // 修复时间计算问题：如果lastDataTime为0，使用连接开始时间
+                const lastDataTime = this.stats.lastDataTime || this.stats.startTime || now;
+                const timeSinceLastData = now - lastDataTime;
+                
+                if (timeSinceLastData > 5000) {  // 5秒没收到数据
+                    this.stats.heartbeatStatus = 'dead';
+                    this.log(`💀 心跳检测: ${(timeSinceLastData/1000).toFixed(1)}秒没有收到数据`);
+                    this.log(`🔍 调试信息: now=${now}, lastDataTime=${lastDataTime}, startTime=${this.stats.startTime}`);
+                } else if (timeSinceLastData > 3000) {  // 3秒
+                    this.stats.heartbeatStatus = 'weak';
+                    this.log(`⚠️ 心跳检测: 数据流不稳定 (${(timeSinceLastData/1000).toFixed(1)}秒)`);
+                } else {
+                    this.stats.heartbeatStatus = 'strong';
+                }
+            }
+
+            updateHeartbeatDisplay() {
+                const now = Date.now();
+                const timeSinceLastData = this.stats.lastDataTime > 0 ? now - this.stats.lastDataTime : 0;
+                
+                let heartbeatText = '';
+                let heartbeatColor = '';
+                
+                switch(this.stats.heartbeatStatus) {
+                    case 'strong':
+                        heartbeatText = `💚 活跃 (${this.stats.dataPacketCount}包)`;
+                        heartbeatColor = '#28a745';
+                        break;
+                    case 'weak':
+                        heartbeatText = `💛 不稳定 (${(timeSinceLastData/1000).toFixed(1)}s)`;
+                        heartbeatColor = '#ffc107';
+                        break;
+                    case 'dead':
+                        heartbeatText = `💀 无数据 (${(timeSinceLastData/1000).toFixed(1)}s)`;
+                        heartbeatColor = '#dc3545';
+                        break;
+                    default:
+                        heartbeatText = '⏳ 等待中...';
+                        heartbeatColor = '#6c757d';
+                }
+                
+                // 更新心跳显示 (可以添加到页面上)
+                this.updateStatus('connected', `已连接 - ${heartbeatText}`);
             }
 
             connect() {
@@ -258,17 +346,49 @@
                             this.updateStatus('connected', '已连接 - 播放中');
                             this.isConnected = true;
                             this.updateButtons();
-                            this.stats.startTime = Date.now();
+                            const now = Date.now();
+                            this.stats.startTime = now;
+                            this.stats.lastDataTime = now;  // 初始化为当前时间
+                            this.stats.heartbeatStatus = 'strong';
+                        },
+                        
+                        // 添加WebSocket数据监控
+                        onSourceEstablished: (source) => {
+                            this.log('📡 数据源已建立');
+                            const now = Date.now();
+                            this.stats.lastDataTime = now;
+                            this.stats.heartbeatStatus = 'strong';
+                            this.log('💚 心跳状态已激活');
+                            
+                            // 监控原始WebSocket
+                            if (source && source.socket) {
+                                this.log('🔍 开始监控WebSocket数据流...');
+                                const originalOnMessage = source.socket.onmessage;
+                                source.socket.onmessage = (event) => {
+                                    this.log(`📨 WebSocket原始数据: ${event.data ? event.data.byteLength || event.data.length : 0} 字节`);
+                                    this.stats.dataReceived += (event.data ? event.data.byteLength || event.data.length : 0);
+                                    this.stats.dataPacketCount++;
+                                    this.stats.lastDataTime = Date.now();
+                                    this.stats.heartbeatStatus = 'strong';
+                                    
+                                    if (originalOnMessage) {
+                                        originalOnMessage.call(source.socket, event);
+                                    }
+                                };
+                            }
                         },
                         
                         onVideoDecode: (decoder, time) => {
                             // 每次解码帧时调用
                             this.stats.frameCount++;
                             this.stats.lastFrameTime = Date.now();
-                        },
-                        
-                        onSourceEstablished: () => {
-                            this.log('📡 数据源已建立');
+                            this.stats.lastDataTime = Date.now();  // 解码成功也算数据活跃
+                            this.stats.heartbeatStatus = 'strong';
+                            
+                            // 每100帧记录一次解码信息
+                            if (this.stats.frameCount % 100 === 0) {
+                                this.log(`🎬 已解码 ${this.stats.frameCount} 帧`);
+                            }
                         },
                         
                         onSourceCompleted: () => {
@@ -320,7 +440,27 @@
                         if (this.player && event.data) {
                             try {
                                 const data = new Uint8Array(event.data);
-                                this.stats.dataReceived += data.length;
+                                const dataSize = data.length;
+                                
+                                // 更新心跳和统计信息
+                                this.stats.dataReceived += dataSize;
+                                this.stats.dataPacketCount++;
+                                this.stats.lastDataTime = Date.now();
+                                this.stats.heartbeatStatus = 'strong';
+                                
+                                // 计算平均包大小
+                                this.stats.avgPacketSize = Math.round(this.stats.dataReceived / this.stats.dataPacketCount);
+                                
+                                // 数据包分析
+                                if (this.stats.dataPacketCount % 50 === 0) {  // 每50个包记录一次
+                                    this.log(`📦 数据包 #${this.stats.dataPacketCount}: ${dataSize}字节, 平均: ${this.stats.avgPacketSize}字节`);
+                                    
+                                    // 简单的H.264数据包检测
+                                    if (data.length > 4) {
+                                        const header = Array.from(data.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                                        this.log(`📄 数据包头: ${header}`);
+                                    }
+                                }
                                 
                                 // 立即写入数据，不缓冲
                                 this.player.write(data);
@@ -328,7 +468,8 @@
                                 this.stats.lastFrameTime = Date.now();
                                 
                             } catch (error) {
-                                this.log(`❌ 写入数据失败: ${error.message}`);
+                                this.stats.decodingErrors++;
+                                this.log(`❌ 写入数据失败: ${error.message} (错误#${this.stats.decodingErrors})`);
                             }
                         }
                     };
@@ -376,7 +517,12 @@
                     frameCount: 0,
                     dataReceived: 0,
                     startTime: 0,
-                    lastFrameTime: 0
+                    lastFrameTime: 0,
+                    lastDataTime: 0,
+                    dataPacketCount: 0,
+                    heartbeatStatus: 'waiting',
+                    avgPacketSize: 0,
+                    decodingErrors: 0
                 };
                 this.updateStats();
             }

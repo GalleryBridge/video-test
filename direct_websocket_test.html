@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>直接WebSocket数据流测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .connect { background: #4CAF50; color: white; }
+        .disconnect { background: #f44336; color: white; }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        .log {
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .stat-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>直接WebSocket数据流测试</h1>
+        
+        <div id="status" class="status disconnected">未连接</div>
+        
+        <div class="controls">
+            <button id="connectBtn" class="connect">连接</button>
+            <button id="disconnectBtn" class="disconnect" disabled>断开</button>
+            <button id="clearBtn">清空日志</button>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-item">
+                <div id="packetsReceived" class="stat-value">0</div>
+                <div class="stat-label">接收包数</div>
+            </div>
+            <div class="stat-item">
+                <div id="totalBytes" class="stat-value">0</div>
+                <div class="stat-label">总字节数</div>
+            </div>
+            <div class="stat-item">
+                <div id="avgPacketSize" class="stat-value">0</div>
+                <div class="stat-label">平均包大小</div>
+            </div>
+            <div class="stat-item">
+                <div id="dataRate" class="stat-value">0</div>
+                <div class="stat-label">数据速率(KB/s)</div>
+            </div>
+            <div class="stat-item">
+                <div id="mpegtsSync" class="stat-value">0</div>
+                <div class="stat-label">MPEG-TS同步包</div>
+            </div>
+            <div class="stat-item">
+                <div id="lastPacketTime" class="stat-value">-</div>
+                <div class="stat-label">最后包时间</div>
+            </div>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        class DirectWebSocketTester {
+            constructor() {
+                this.ws = null;
+                this.isConnected = false;
+                this.stats = {
+                    packetsReceived: 0,
+                    totalBytes: 0,
+                    mpegtsSync: 0,
+                    startTime: 0,
+                    lastPacketTime: 0
+                };
+                
+                this.connectBtn = document.getElementById('connectBtn');
+                this.disconnectBtn = document.getElementById('disconnectBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.status = document.getElementById('status');
+                this.logEl = document.getElementById('log');
+                
+                this.init();
+            }
+
+            init() {
+                this.connectBtn.addEventListener('click', () => this.connect());
+                this.disconnectBtn.addEventListener('click', () => this.disconnect());
+                this.clearBtn.addEventListener('click', () => this.clearLog());
+                
+                // 启动统计更新
+                setInterval(() => this.updateDisplay(), 1000);
+                
+                this.log('🚀 直接WebSocket测试器初始化完成');
+            }
+
+            log(message) {
+                const time = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.textContent = `[${time}] ${message}`;
+                this.logEl.appendChild(logEntry);
+                this.logEl.scrollTop = this.logEl.scrollHeight;
+                console.log(message);
+            }
+
+            clearLog() {
+                this.logEl.innerHTML = '';
+            }
+
+            updateStatus(isConnected, message) {
+                this.status.className = `status ${isConnected ? 'connected' : 'disconnected'}`;
+                this.status.textContent = message;
+            }
+
+            updateButtons() {
+                this.connectBtn.disabled = this.isConnected;
+                this.disconnectBtn.disabled = !this.isConnected;
+            }
+
+            updateDisplay() {
+                document.getElementById('packetsReceived').textContent = this.stats.packetsReceived;
+                document.getElementById('totalBytes').textContent = this.stats.totalBytes.toLocaleString();
+                
+                const avgSize = this.stats.packetsReceived > 0 ? 
+                    Math.round(this.stats.totalBytes / this.stats.packetsReceived) : 0;
+                document.getElementById('avgPacketSize').textContent = avgSize;
+                
+                const elapsed = (Date.now() - this.stats.startTime) / 1000;
+                const rate = elapsed > 0 ? Math.round(this.stats.totalBytes / elapsed / 1024) : 0;
+                document.getElementById('dataRate').textContent = rate;
+                
+                document.getElementById('mpegtsSync').textContent = this.stats.mpegtsSync;
+                
+                const lastTime = this.stats.lastPacketTime > 0 ? 
+                    new Date(this.stats.lastPacketTime).toLocaleTimeString() : '-';
+                document.getElementById('lastPacketTime').textContent = lastTime;
+            }
+
+            connect() {
+                if (this.isConnected) return;
+                
+                const wsUrl = 'ws://192.168.1.196:8103/video';
+                this.log(`🔗 连接到: ${wsUrl}`);
+                this.updateStatus(false, '连接中...');
+                
+                try {
+                    this.ws = new WebSocket(wsUrl);
+                    this.ws.binaryType = 'arraybuffer';
+                    
+                    this.ws.onopen = () => {
+                        this.log('✅ WebSocket连接成功');
+                        this.updateStatus(true, '已连接 - 等待数据');
+                        this.isConnected = true;
+                        this.updateButtons();
+                        this.stats.startTime = Date.now();
+                        this.stats.lastPacketTime = Date.now();
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        const data = new Uint8Array(event.data);
+                        const size = data.length;
+                        
+                        // 更新统计
+                        this.stats.packetsReceived++;
+                        this.stats.totalBytes += size;
+                        this.stats.lastPacketTime = Date.now();
+                        
+                        // 检查MPEG-TS同步字节
+                        let syncCount = 0;
+                        for (let i = 0; i < data.length; i++) {
+                            if (data[i] === 0x47) {
+                                syncCount++;
+                            }
+                        }
+                        this.stats.mpegtsSync += syncCount;
+                        
+                        // 详细日志（每10个包记录一次）
+                        if (this.stats.packetsReceived % 10 === 0) {
+                            const header = data.length >= 8 ? 
+                                Array.from(data.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ') : 
+                                '数据太短';
+                            
+                            this.log(`📨 包 #${this.stats.packetsReceived}: ${size}字节, 同步字节:${syncCount}, 头部:${header}`);
+                            
+                            // 分析数据质量
+                            if (syncCount === 0) {
+                                this.log(`⚠️ 警告: 包 #${this.stats.packetsReceived} 没有MPEG-TS同步字节`);
+                            }
+                        } else {
+                            // 简要日志
+                            this.log(`📦 收到数据包: ${size}字节 (总计: ${this.stats.packetsReceived})`);
+                        }
+                        
+                        this.updateStatus(true, `已连接 - 接收中 (${this.stats.packetsReceived}包)`);
+                    };
+                    
+                    this.ws.onclose = (event) => {
+                        this.log(`🔌 WebSocket连接关闭: 代码=${event.code}, 原因=${event.reason}`);
+                        this.disconnect();
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        this.log(`❌ WebSocket错误: ${error}`);
+                        this.updateStatus(false, '连接错误');
+                        this.isConnected = false;
+                        this.updateButtons();
+                    };
+                    
+                } catch (error) {
+                    this.log(`❌ 连接失败: ${error.message}`);
+                    this.updateStatus(false, '连接失败');
+                    this.updateButtons();
+                }
+            }
+
+            disconnect() {
+                this.log('🔌 断开连接');
+                
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+                
+                this.updateStatus(false, '未连接');
+                this.isConnected = false;
+                this.updateButtons();
+            }
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            window.tester = new DirectWebSocketTester();
+        });
+    </script>
+</body>
+</html> 

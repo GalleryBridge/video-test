@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H.264裸流播放器</title>
+    <script src="jsmpeg.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .video-container {
+            text-align: center;
+            margin: 20px 0;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .connect { background: #4CAF50; color: white; }
+        .disconnect { background: #f44336; color: white; }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        .log {
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            height: 200px;
+            overflow-y: auto;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .stat-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>H.264裸流播放器</h1>
+        
+        <div class="video-container">
+            <canvas id="videoCanvas" width="640" height="480"></canvas>
+        </div>
+        
+        <div id="status" class="status disconnected">未连接</div>
+        
+        <div class="controls">
+            <button id="connectBtn" class="connect">连接</button>
+            <button id="disconnectBtn" class="disconnect" disabled>断开</button>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-item">
+                <div id="frameCount" class="stat-value">0</div>
+                <div class="stat-label">帧数</div>
+            </div>
+            <div class="stat-item">
+                <div id="dataReceived" class="stat-value">0</div>
+                <div class="stat-label">接收数据(KB)</div>
+            </div>
+            <div class="stat-item">
+                <div id="frameRate" class="stat-value">0</div>
+                <div class="stat-label">帧率(FPS)</div>
+            </div>
+            <div class="stat-item">
+                <div id="nalUnits" class="stat-value">0</div>
+                <div class="stat-label">NAL单元</div>
+            </div>
+            <div class="stat-item">
+                <div id="keyframes" class="stat-value">0</div>
+                <div class="stat-label">关键帧</div>
+            </div>
+            <div class="stat-item">
+                <div id="heartbeat" class="stat-value">⏳</div>
+                <div class="stat-label">心跳状态</div>
+            </div>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        class H264Player {
+            constructor() {
+                this.canvas = document.getElementById('videoCanvas');
+                this.connectBtn = document.getElementById('connectBtn');
+                this.disconnectBtn = document.getElementById('disconnectBtn');
+                this.status = document.getElementById('status');
+                this.logEl = document.getElementById('log');
+                
+                this.webSocket = null;
+                this.player = null;
+                this.isConnected = false;
+                
+                // 统计数据
+                this.stats = {
+                    frameCount: 0,
+                    dataReceived: 0,
+                    nalUnits: 0,
+                    keyframes: 0,
+                    startTime: 0,
+                    lastFrameTime: 0,
+                    lastDataTime: 0,
+                    heartbeatStatus: 'waiting'
+                };
+                
+                this.init();
+            }
+
+            init() {
+                this.log('🚀 初始化H.264裸流播放器...');
+                
+                this.connectBtn.addEventListener('click', () => this.connect());
+                this.disconnectBtn.addEventListener('click', () => this.disconnect());
+                
+                // 检查JSMpeg可用性
+                if (typeof JSMpeg !== 'undefined') {
+                    this.log('✅ JSMpeg库已加载');
+                } else {
+                    this.log('❌ JSMpeg库未加载');
+                }
+                
+                // 启动统计更新和心跳检测
+                setInterval(() => this.updateStats(), 1000);
+                setInterval(() => this.checkHeartbeat(), 2000);
+            }
+
+            log(message) {
+                const time = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.textContent = `[${time}] ${message}`;
+                this.logEl.appendChild(logEntry);
+                this.logEl.scrollTop = this.logEl.scrollHeight;
+                console.log(message);
+            }
+
+            updateStatus(status, message) {
+                this.status.className = `status ${status}`;
+                this.status.textContent = message;
+            }
+
+            updateButtons() {
+                this.connectBtn.disabled = this.isConnected;
+                this.disconnectBtn.disabled = !this.isConnected;
+            }
+
+            updateStats() {
+                if (!this.isConnected) return;
+                
+                const now = Date.now();
+                const elapsed = (now - this.stats.startTime) / 1000;
+                const fps = elapsed > 0 ? (this.stats.frameCount / elapsed).toFixed(1) : 0;
+                
+                document.getElementById('frameCount').textContent = this.stats.frameCount;
+                document.getElementById('dataReceived').textContent = Math.round(this.stats.dataReceived / 1024);
+                document.getElementById('frameRate').textContent = fps;
+                document.getElementById('nalUnits').textContent = this.stats.nalUnits;
+                document.getElementById('keyframes').textContent = this.stats.keyframes;
+                
+                // 更新心跳显示
+                const heartbeatEl = document.getElementById('heartbeat');
+                switch(this.stats.heartbeatStatus) {
+                    case 'strong':
+                        heartbeatEl.textContent = '💚';
+                        heartbeatEl.style.color = '#28a745';
+                        break;
+                    case 'weak':
+                        heartbeatEl.textContent = '💛';
+                        heartbeatEl.style.color = '#ffc107';
+                        break;
+                    case 'dead':
+                        heartbeatEl.textContent = '💀';
+                        heartbeatEl.style.color = '#dc3545';
+                        break;
+                    default:
+                        heartbeatEl.textContent = '⏳';
+                        heartbeatEl.style.color = '#6c757d';
+                }
+            }
+
+            checkHeartbeat() {
+                if (!this.isConnected) return;
+                
+                const now = Date.now();
+                const lastDataTime = this.stats.lastDataTime || this.stats.startTime || now;
+                const timeSinceLastData = now - lastDataTime;
+                
+                if (timeSinceLastData > 5000) {
+                    this.stats.heartbeatStatus = 'dead';
+                    this.log(`💀 心跳检测: ${(timeSinceLastData/1000).toFixed(1)}秒没有收到数据`);
+                } else if (timeSinceLastData > 3000) {
+                    this.stats.heartbeatStatus = 'weak';
+                    this.log(`⚠️ 心跳检测: 数据流不稳定 (${(timeSinceLastData/1000).toFixed(1)}秒)`);
+                } else {
+                    this.stats.heartbeatStatus = 'strong';
+                }
+            }
+
+            connect() {
+                if (this.isConnected) return;
+                
+                const wsUrl = 'ws://192.168.1.196:8103/video';
+                this.log(`🔗 连接到H.264裸流: ${wsUrl}`);
+                this.updateStatus('connecting', '连接中...');
+                
+                try {
+                    // 创建JSMpeg播放器，配置为H.264模式
+                    this.player = new JSMpeg.Player(wsUrl, {
+                        canvas: this.canvas,
+                        audio: false,
+                        autoplay: true,
+                        streaming: true,
+                        loop: false,
+                        
+                        // H.264裸流专用配置
+                        videoBufferSize: 512 * 1024,   // 增加缓冲区以处理H.264
+                        audioBufferSize: 0,
+                        chunkSize: 1024,
+                        throttled: false,
+                        progressive: true,
+                        preserveDrawingBuffer: false,
+                        
+                        // 回调函数
+                        onPlay: () => {
+                            this.log('✅ 开始播放H.264流');
+                            this.updateStatus('connected', '已连接 - H.264播放中');
+                            this.isConnected = true;
+                            this.updateButtons();
+                            const now = Date.now();
+                            this.stats.startTime = now;
+                            this.stats.lastDataTime = now;
+                            this.stats.heartbeatStatus = 'strong';
+                        },
+                        
+                        onVideoDecode: (decoder, time) => {
+                            this.stats.frameCount++;
+                            this.stats.lastFrameTime = Date.now();
+                            this.stats.lastDataTime = Date.now();
+                            this.stats.heartbeatStatus = 'strong';
+                            
+                            // 每100帧记录一次
+                            if (this.stats.frameCount % 100 === 0) {
+                                this.log(`🎬 已解码 ${this.stats.frameCount} 帧 (H.264)`);
+                            }
+                        },
+                        
+                        onSourceEstablished: (source) => {
+                            this.log('📡 H.264数据源已建立');
+                            const now = Date.now();
+                            this.stats.lastDataTime = now;
+                            this.stats.heartbeatStatus = 'strong';
+                            
+                            // 监控WebSocket数据
+                            if (source && source.socket) {
+                                this.log('🔍 开始监控H.264数据流...');
+                                const originalOnMessage = source.socket.onmessage;
+                                source.socket.onmessage = (event) => {
+                                    const data = new Uint8Array(event.data);
+                                    const size = data.length;
+                                    
+                                    this.stats.dataReceived += size;
+                                    this.stats.lastDataTime = Date.now();
+                                    this.stats.heartbeatStatus = 'strong';
+                                    
+                                    // H.264 NAL单元检测
+                                    let nalCount = 0;
+                                    let keyframeCount = 0;
+                                    
+                                    // 检查4字节起始码
+                                    for (let i = 0; i <= data.length - 4; i++) {
+                                        if (data[i] === 0x00 && data[i+1] === 0x00 && 
+                                            data[i+2] === 0x00 && data[i+3] === 0x01) {
+                                            nalCount++;
+                                            // 检查NAL类型（第5个字节的低5位）
+                                            if (i + 4 < data.length) {
+                                                const nalType = data[i+4] & 0x1F;
+                                                if (nalType === 5) { // IDR帧
+                                                    keyframeCount++;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // 检查3字节起始码
+                                    for (let i = 0; i <= data.length - 3; i++) {
+                                        if (data[i] === 0x00 && data[i+1] === 0x00 && data[i+2] === 0x01) {
+                                            nalCount++;
+                                            if (i + 3 < data.length) {
+                                                const nalType = data[i+3] & 0x1F;
+                                                if (nalType === 5) {
+                                                    keyframeCount++;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    this.stats.nalUnits += nalCount;
+                                    this.stats.keyframes += keyframeCount;
+                                    
+                                    // 每50个包记录一次
+                                    if (this.stats.dataReceived % (50 * 1024) < size) {
+                                        this.log(`📨 H.264数据: ${size}字节, NAL单元:${nalCount}, 关键帧:${keyframeCount}`);
+                                        
+                                        if (size >= 8) {
+                                            const header = Array.from(data.slice(0, 8))
+                                                .map(b => b.toString(16).padStart(2, '0')).join(' ');
+                                            this.log(`   📄 包头: ${header}`);
+                                        }
+                                    }
+                                    
+                                    // 调用原始处理器
+                                    if (originalOnMessage) {
+                                        originalOnMessage.call(source.socket, event);
+                                    }
+                                };
+                            }
+                        },
+                        
+                        onSourceCompleted: () => {
+                            this.log('📡 H.264数据源完成');
+                        }
+                    });
+                    
+                } catch (error) {
+                    this.log(`❌ 连接失败: ${error.message}`);
+                    this.updateStatus('disconnected', '连接失败');
+                    this.updateButtons();
+                }
+            }
+
+            disconnect() {
+                this.log('🔌 断开H.264连接');
+                
+                if (this.player) {
+                    if (typeof this.player.destroy === 'function') {
+                        this.player.destroy();
+                    }
+                    this.player = null;
+                }
+                
+                this.updateStatus('disconnected', '未连接');
+                this.isConnected = false;
+                this.updateButtons();
+                
+                // 重置统计
+                this.stats = {
+                    frameCount: 0,
+                    dataReceived: 0,
+                    nalUnits: 0,
+                    keyframes: 0,
+                    startTime: 0,
+                    lastFrameTime: 0,
+                    lastDataTime: 0,
+                    heartbeatStatus: 'waiting'
+                };
+                this.updateStats();
+            }
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            window.h264Player = new H264Player();
+        });
+    </script>
+</body>
+</html> 
