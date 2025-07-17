@@ -1,9 +1,8 @@
 package com.zky.controller;
 
 import org.springframework.web.bind.annotation.*;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Arrays;
+
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/config")
@@ -15,10 +14,19 @@ public class ConfigController {
         Map<String, Object> config = new HashMap<>();
         
         // STUN服务器配置
-        config.put("iceServers", Arrays.asList(
-            Map.of("urls", "stun:stun.l.google.com:19302"),
-            Map.of("urls", "stun:stun1.l.google.com:19302")
-        ));
+
+        List<Map<String, Object>> iceServers = new ArrayList<>();
+
+        Map<String, Object> stun1 = new HashMap<>();
+        stun1.put("urls", "stun:stun.l.google.com:19302");
+
+        Map<String, Object> stun2 = new HashMap<>();
+        stun2.put("urls", "stun:stun1.l.google.com:19302");
+
+        iceServers.add(stun1);
+        iceServers.add(stun2);
+
+        config.put("iceServers", iceServers);
         
         // WebRTC媒体服务器地址
         config.put("mediaServerUrl", "ws://localhost:8765");

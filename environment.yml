@@ -1,0 +1,16 @@
+name: video-stream
+channels:
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free/
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - numpy
+  - scipy
+  - pillow
+  - opencv
+  - pip
+  - pip:
+    - websockets
+    - asyncio 
