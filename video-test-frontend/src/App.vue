@@ -191,6 +191,7 @@ async function handleWebSocketMessage(data: any) {
     case 'connected':
       console.log('服务器连接成功:', data.data.message)
       isConnected.value = true
+      isConnecting.value = false  // 重置连接状态
       connectionStatus.value = '已连接'
       statusText.value = '已连接，点击开始播放'
       if (data.data.video_config) {

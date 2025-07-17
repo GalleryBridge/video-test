@@ -3,10 +3,10 @@
 # RTSP摄像头配置
 RTSP_URL = "rtsp://admin:zky2025...@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0"
 
-# 视频参数配置
-VIDEO_WIDTH = 640
-VIDEO_HEIGHT = 480
-VIDEO_FPS = 30
+# 视频参数配置 (针对4K摄像头优化)
+VIDEO_WIDTH = 960
+VIDEO_HEIGHT = 540
+VIDEO_FPS = 15
 
 # WebRTC服务器配置
 WEBRTC_SERVER_HOST = "0.0.0.0"
