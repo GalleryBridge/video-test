@@ -14,13 +14,16 @@ let peerConnection: RTCPeerConnection | null = null
 let websocket: WebSocket | null = null
 let localStream: MediaStream | null = null
 
-// STUN服务器配置
-const rtcConfiguration = {
+// WebRTC配置（将从后端获取）
+let rtcConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' }
   ]
 }
+
+// 媒体服务器URL（将从后端获取）
+let mediaServerUrl = 'ws://localhost:8765'
 
 // 计算属性
 const connectionStatusClass = computed(() => {
@@ -32,12 +35,27 @@ const connectionStatusClass = computed(() => {
   }
 })
 
+// 获取系统配置
+async function loadSystemConfig() {
+  try {
+    const response = await fetch('http://localhost:8080/api/config/webrtc')
+    if (response.ok) {
+      const config = await response.json()
+      rtcConfiguration.iceServers = config.iceServers
+      mediaServerUrl = config.mediaServerUrl
+      console.log('系统配置加载成功:', config)
+    }
+  } catch (error) {
+    console.warn('加载系统配置失败，使用默认配置:', error)
+  }
+}
+
 // WebSocket连接
 async function connectWebSocket(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
       // 连接到WebRTC媒体服务器
-      websocket = new WebSocket('ws://localhost:8765')
+      websocket = new WebSocket(mediaServerUrl)
       
       websocket.onopen = () => {
         console.log('WebSocket连接已建立')
@@ -72,19 +90,31 @@ async function connectWebSocket(): Promise<void> {
 // 处理WebSocket消息
 async function handleWebSocketMessage(data: any) {
   switch (data.type) {
+    case 'connected':
+      console.log('WebSocket连接成功:', data.data.message)
+      statusText.value = '已连接到服务器，正在建立WebRTC...'
+      break
     case 'answer':
-      await handleAnswer(data)
+      await handleAnswer(data.data)
       break
     case 'ice-candidate':
-      await handleIceCandidate(data)
+      await handleIceCandidate(data.data)
+      break
+    case 'connection-state':
+      handleConnectionStateChange(data.data.state)
+      break
+    case 'stream-ready':
+      console.log('视频流准备就绪:', data.data.message)
+      statusText.value = 'RTSP视频流准备就绪'
       break
     case 'error':
-      console.error('服务器错误:', data.message)
-      statusText.value = `错误: ${data.message}`
+      console.error('服务器错误:', data.data.message)
+      statusText.value = `错误: ${data.data.message}`
       connectionStatus.value = '连接失败'
+      isConnecting.value = false
       break
     default:
-      console.log('收到未知类型消息:', data.type)
+      console.log('收到未知类型消息:', data.type, data)
   }
 }
 
@@ -97,49 +127,31 @@ async function createPeerConnection(): Promise<void> {
     if (event.candidate && websocket) {
       websocket.send(JSON.stringify({
         type: 'ice-candidate',
-        candidate: event.candidate
+        candidate: {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
+        }
       }))
+      console.log('发送ICE候选到服务器')
     }
   }
   
   // 监听远程视频流
   peerConnection.ontrack = (event) => {
-    console.log('收到远程视频流')
-    if (videoElement.value) {
+    console.log('收到远程视频流', event.streams[0])
+    if (videoElement.value && event.streams[0]) {
       videoElement.value.srcObject = event.streams[0]
       
       // 获取视频分辨率
-      event.streams[0].getVideoTracks()[0].addEventListener('loadedmetadata', () => {
-        if (videoElement.value) {
-          videoResolution.value = `${videoElement.value.videoWidth}x${videoElement.value.videoHeight}`
-        }
-      })
-    }
-  }
-  
-  // 监听连接状态变化
-  peerConnection.onconnectionstatechange = () => {
-    const state = peerConnection?.connectionState
-    console.log('WebRTC连接状态:', state)
-    
-    switch (state) {
-      case 'connected':
-        isConnected.value = true
-        isConnecting.value = false
-        connectionStatus.value = '已连接'
-        statusText.value = '视频流已连接'
-        break
-      case 'connecting':
-        connectionStatus.value = '连接中'
-        break
-      case 'disconnected':
-      case 'failed':
-      case 'closed':
-        isConnected.value = false
-        isConnecting.value = false
-        connectionStatus.value = '连接失败'
-        statusText.value = '连接已断开'
-        break
+      const videoTrack = event.streams[0].getVideoTracks()[0]
+      if (videoTrack) {
+        videoTrack.addEventListener('loadedmetadata', () => {
+          if (videoElement.value) {
+            videoResolution.value = `${videoElement.value.videoWidth}x${videoElement.value.videoHeight}`
+          }
+        })
+      }
     }
   }
   
@@ -150,6 +162,7 @@ async function createPeerConnection(): Promise<void> {
   })
   
   await peerConnection.setLocalDescription(offer)
+  console.log('创建并设置本地SDP offer')
   
   // 发送offer到服务器
   if (websocket) {
@@ -157,6 +170,7 @@ async function createPeerConnection(): Promise<void> {
       type: 'offer',
       sdp: offer.sdp
     }))
+    console.log('发送offer到服务器')
   }
 }
 
@@ -176,8 +190,39 @@ async function handleAnswer(data: any) {
 async function handleIceCandidate(data: any) {
   if (peerConnection && data.candidate) {
     await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate))
+    console.log('添加ICE候选成功')
   }
 }
+
+// 处理连接状态变化
+function handleConnectionStateChange(state: string) {
+  console.log('WebRTC连接状态变化:', state)
+  
+  switch (state) {
+    case 'connected':
+      isConnected.value = true
+      isConnecting.value = false
+      connectionStatus.value = '已连接'
+      statusText.value = 'WebRTC连接成功，正在传输视频...'
+      break
+    case 'connecting':
+      connectionStatus.value = '连接中'
+      statusText.value = '正在建立WebRTC连接...'
+      break
+    case 'disconnected':
+    case 'failed':
+    case 'closed':
+      isConnected.value = false
+      isConnecting.value = false
+      connectionStatus.value = '连接失败'
+      statusText.value = 'WebRTC连接已断开'
+      break
+    default:
+      connectionStatus.value = state
+  }
+}
+
+
 
 // 开始连接
 async function startConnection() {
@@ -217,7 +262,9 @@ function cleanup() {
     websocket = null
   }
   
-  if (videoElement.value) {
+  if (videoElement.value && videoElement.value.srcObject) {
+    const stream = videoElement.value.srcObject as MediaStream
+    stream.getTracks().forEach(track => track.stop())
     videoElement.value.srcObject = null
   }
   
@@ -236,8 +283,9 @@ async function toggleConnection() {
 }
 
 // 生命周期钩子
-onMounted(() => {
+onMounted(async () => {
   console.log('WebRTC视频监控系统已加载')
+  await loadSystemConfig()
 })
 
 onUnmounted(() => {
@@ -262,7 +310,7 @@ onUnmounted(() => {
           :class="{ 'connected': isConnected }"
         ></video>
         
-        <div v-if="!isConnected" class="video-overlay">
+                 <div v-if="!isConnected || isConnecting" class="video-overlay">
           <div class="status-indicator">
             <div class="loading-spinner" v-if="isConnecting"></div>
             <span class="status-text">{{ statusText }}</span>

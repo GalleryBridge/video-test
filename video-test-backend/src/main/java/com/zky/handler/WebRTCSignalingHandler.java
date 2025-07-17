@@ -3,6 +3,7 @@ package com.zky.handler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.socket.*;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -101,11 +102,10 @@ public class WebRTCSignalingHandler implements WebSocketHandler {
     }
 
     private void sendMessage(WebSocketSession session, String type, Object data) throws IOException {
-        Map<String, Object> response = Map.of(
-            "type", type,
-            "data", data,
-            "timestamp", System.currentTimeMillis()
-        );
+        Map<String, Object> response = new HashMap<>();
+        response.put("type", type);
+        response.put("data", data);
+        response.put("timestamp", System.currentTimeMillis());
         String jsonResponse = objectMapper.writeValueAsString(response);
         session.sendMessage(new TextMessage(jsonResponse));
     }
