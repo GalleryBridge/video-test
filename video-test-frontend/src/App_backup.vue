@@ -1,26 +1,17 @@
 <template>
   <div id="app">
     <header class="header">
-      <h1>WebRTC视频监控系统</h1>
-      <div class="header-subtitle">实时RTSP视频流 (WebRTC P2P传输)</div>
+      <h1>WebSocket视频监控系统</h1>
+      <div class="header-subtitle">实时RTSP视频流 (兼容Python 3.7)</div>
     </header>
     
     <main class="main-content">
       <div class="video-container">
         <div class="video-display">
-          <video
-            v-if="isWebRTCConnected"
-            ref="webrtcVideo"
-            class="video-player webrtc"
-            :class="{ 'connected': isConnected && isStreaming }"
-            autoplay
-            muted
-            playsinline
-          ></video>
           <img
-            v-else-if="currentFrame"
+            v-if="currentFrame"
             :src="currentFrame"
-            class="video-player fallback"
+            class="video-player"
             :class="{ 'connected': isConnected && isStreaming }"
             alt="视频流"
           />
@@ -28,8 +19,8 @@
             v-else
             ref="placeholderCanvas"
             class="video-player placeholder"
-            width="960"
-            height="540"
+            width="640"
+            height="480"
           ></canvas>
         </div>
         
@@ -45,14 +36,10 @@
         <button 
           @click="toggleConnection" 
           class="control-btn"
-          :class="{ 
-            'connecting': isConnecting, 
-            'connected': isConnected,
-            'webrtc': isWebRTCConnected 
-          }"
+          :class="{ 'connecting': isConnecting, 'connected': isConnected }"
           :disabled="isConnecting"
         >
-          <span v-if="!isConnected && !isConnecting">连接WebRTC服务器</span>
+          <span v-if="!isConnected && !isConnecting">连接服务器</span>
           <span v-else-if="isConnecting">连接中...</span>
           <span v-else-if="!isStreaming">开始播放</span>
           <span v-else>停止播放</span>
@@ -62,10 +49,6 @@
           <div class="info-item">
             <span class="label">连接状态:</span>
             <span class="value" :class="connectionStatusClass">{{ connectionStatus }}</span>
-          </div>
-          <div class="info-item">
-            <span class="label">传输模式:</span>
-            <span class="value" :class="transportModeClass">{{ transportMode }}</span>
           </div>
           <div class="info-item">
             <span class="label">视频状态:</span>
@@ -78,10 +61,6 @@
           <div class="info-item" v-if="frameRate > 0">
             <span class="label">帧率:</span>
             <span class="value">{{ frameRate.toFixed(1) }} FPS</span>
-          </div>
-          <div class="info-item" v-if="isWebRTCConnected">
-            <span class="label">连接质量:</span>
-            <span class="value status-connected">优秀 (P2P)</span>
           </div>
         </div>
       </div>
@@ -96,20 +75,15 @@ import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 const isConnected = ref(false)
 const isConnecting = ref(false)
 const isStreaming = ref(false)
-const isWebRTCConnected = ref(false)
 const connectionStatus = ref('未连接')
 const streamingStatus = ref('未开始')
-const transportMode = ref('WebSocket备用')
-const statusText = ref('点击连接WebRTC服务器按钮开始')
+const statusText = ref('点击连接服务器按钮开始')
 const currentFrame = ref<string | null>(null)
-const videoInfo = ref({ width: 960, height: 540 })
+const videoInfo = ref({ width: 0, height: 0 })
 const frameRate = ref(0)
 
-// WebRTC和WebSocket相关
+// WebSocket相关
 let websocket: WebSocket | null = null
-let peerConnection: RTCPeerConnection | null = null
-let dataChannel: RTCDataChannel | null = null
-const webrtcVideo = ref<HTMLVideoElement | null>(null)
 const placeholderCanvas = ref<HTMLCanvasElement | null>(null)
 
 // 帧率计算
@@ -117,16 +91,8 @@ let frameCount = 0
 let lastFrameTime = 0
 let frameRateUpdateTime = 0
 
-// 服务器URL
+// 服务器URL（将从后端获取）
 let mediaServerUrl = 'ws://localhost:8765'
-
-// WebRTC配置
-const rtcConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ]
-}
 
 // 计算属性
 const connectionStatusClass = computed(() => {
@@ -145,10 +111,6 @@ const streamingStatusClass = computed(() => {
     case '已停止': return 'status-disconnected'
     default: return 'status-disconnected'
   }
-})
-
-const transportModeClass = computed(() => {
-  return isWebRTCConnected.value ? 'status-connected' : 'status-disconnected'
 })
 
 // 获取系统配置
@@ -181,82 +143,10 @@ function drawPlaceholder() {
   ctx.fillStyle = '#ffffff'
   ctx.font = '24px Arial'
   ctx.textAlign = 'center'
-  ctx.fillText('等待WebRTC连接...', canvas.width / 2, canvas.height / 2 - 40)
+  ctx.fillText('等待视频流...', canvas.width / 2, canvas.height / 2 - 20)
   ctx.font = '16px Arial'
   ctx.fillStyle = '#cccccc'
-  ctx.fillText('P2P实时视频传输', canvas.width / 2, canvas.height / 2 - 10)
-  ctx.fillStyle = '#999999'
-  ctx.font = '14px Arial'
-  ctx.fillText('备用: WebSocket JPEG流', canvas.width / 2, canvas.height / 2 + 20)
-}
-
-// 初始化WebRTC
-async function initWebRTC() {
-  try {
-    peerConnection = new RTCPeerConnection(rtcConfiguration)
-    
-    // 处理ICE候选
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate && websocket) {
-        websocket.send(JSON.stringify({
-          type: 'ice_candidate',
-          candidate: event.candidate
-        }))
-      }
-    }
-    
-    // 处理远程流
-    peerConnection.ontrack = (event) => {
-      console.log('收到远程视频流')
-      if (webrtcVideo.value && event.streams[0]) {
-        webrtcVideo.value.srcObject = event.streams[0]
-        isWebRTCConnected.value = true
-        transportMode.value = 'WebRTC P2P'
-      }
-    }
-    
-    // 创建数据通道
-    dataChannel = peerConnection.createDataChannel('video', {
-      ordered: true
-    })
-    
-    dataChannel.onopen = () => {
-      console.log('WebRTC数据通道已打开')
-      transportMode.value = 'WebRTC P2P'
-    }
-    
-    dataChannel.onmessage = (event) => {
-      console.log('收到WebRTC数据:', event.data)
-    }
-    
-    return true
-  } catch (error) {
-    console.error('WebRTC初始化失败:', error)
-    return false
-  }
-}
-
-// 创建WebRTC Offer
-async function createOffer() {
-  if (!peerConnection || !websocket) return
-  
-  try {
-    const offer = await peerConnection.createOffer({
-      offerToReceiveVideo: true,
-      offerToReceiveAudio: false
-    })
-    
-    await peerConnection.setLocalDescription(offer)
-    
-    websocket.send(JSON.stringify({
-      type: 'offer',
-      sdp: offer
-    }))
-    
-    console.log('WebRTC Offer已发送')
-  } catch (error) {
-    console.error('创建WebRTC Offer失败:', error)
-  }
+  ctx.fillText('WebSocket视频传输', canvas.width / 2, canvas.height / 2 + 20)
 }
 
 // WebSocket连接
@@ -299,61 +189,28 @@ async function connectWebSocket(): Promise<void> {
 async function handleWebSocketMessage(data: any) {
   switch (data.type) {
     case 'connected':
-      console.log('WebRTC信令服务器连接成功:', data.data.message)
+      console.log('服务器连接成功:', data.data.message)
       isConnected.value = true
-      isConnecting.value = false
+      isConnecting.value = false  // 重置连接状态
       connectionStatus.value = '已连接'
-      statusText.value = '已连接，正在建立WebRTC连接...'
-      
+      statusText.value = '已连接，点击开始播放'
       if (data.data.video_config) {
         videoInfo.value = {
           width: data.data.video_config.width,
           height: data.data.video_config.height
         }
       }
-      
-      // 初始化WebRTC连接
-      if (await initWebRTC()) {
-        await createOffer()
-      }
-      break
-      
-    case 'answer':
-      console.log('收到WebRTC Answer')
-      if (peerConnection && data.data.sdp) {
-        try {
-          await peerConnection.setRemoteDescription(data.data.sdp)
-          console.log('WebRTC连接建立成功')
-        } catch (error) {
-          console.error('设置远程描述失败:', error)
-        }
-      }
-      break
-      
-    case 'ice_candidate':
-      console.log('收到ICE候选')
-      if (peerConnection && data.data.candidate) {
-        try {
-          await peerConnection.addIceCandidate(data.data.candidate)
-        } catch (error) {
-          console.error('添加ICE候选失败:', error)
-        }
-      }
       break
       
     case 'video_frame':
-      // WebRTC备用方案：使用WebSocket传输JPEG
-      if (!isWebRTCConnected.value) {
-        handleVideoFrame(data.data)
-        transportMode.value = 'WebSocket备用'
-      }
+      handleVideoFrame(data.data)
       break
       
     case 'video_started':
       console.log('视频已开始:', data.data.message)
       isStreaming.value = true
       streamingStatus.value = '播放中'
-      statusText.value = isWebRTCConnected.value ? 'WebRTC视频流播放中' : '备用视频流播放中'
+      statusText.value = '视频流播放中'
       break
       
     case 'video_stopped':
@@ -379,7 +236,7 @@ async function handleWebSocketMessage(data: any) {
   }
 }
 
-// 处理视频帧 (备用方案)
+// 处理视频帧
 function handleVideoFrame(frameData: any) {
   if (frameData.image) {
     currentFrame.value = `data:image/jpeg;base64,${frameData.image}`
@@ -433,7 +290,7 @@ async function stopVideoStream() {
 async function startConnection() {
   try {
     isConnecting.value = true
-    statusText.value = '正在连接WebRTC信令服务器...'
+    statusText.value = '正在连接WebSocket服务器...'
     
     await connectWebSocket()
     
@@ -451,7 +308,6 @@ function stopConnection() {
   statusText.value = '已断开连接'
   connectionStatus.value = '未连接'
   streamingStatus.value = '未开始'
-  transportMode.value = 'WebSocket备用'
 }
 
 // 清理资源
@@ -461,24 +317,9 @@ function cleanup() {
     websocket = null
   }
   
-  if (peerConnection) {
-    peerConnection.close()
-    peerConnection = null
-  }
-  
-  if (dataChannel) {
-    dataChannel.close()
-    dataChannel = null
-  }
-  
-  if (webrtcVideo.value) {
-    webrtcVideo.value.srcObject = null
-  }
-  
   isConnected.value = false
   isConnecting.value = false
   isStreaming.value = false
-  isWebRTCConnected.value = false
   currentFrame.value = null
   frameRate.value = 0
   frameCount = 0
@@ -499,7 +340,7 @@ async function toggleConnection() {
 
 // 生命周期钩子
 onMounted(async () => {
-  console.log('WebRTC视频监控系统已加载')
+  console.log('WebSocket视频监控系统已加载')
   await loadSystemConfig()
   
   // 绘制初始占位符
@@ -549,7 +390,7 @@ onUnmounted(() => {
 .video-container {
   position: relative;
   width: 100%;
-  max-width: 1000px;
+  max-width: 800px;
   margin: 0 auto 2rem;
   background: #000;
   border-radius: 12px;
@@ -561,7 +402,7 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 0;
-  padding-bottom: 56.25%; /* 16:9 宽高比 */
+  padding-bottom: 75%; /* 4:3 宽高比 */
 }
 
 .video-player {
@@ -577,14 +418,6 @@ onUnmounted(() => {
 
 .video-player.connected {
   box-shadow: 0 0 20px rgba(74, 144, 226, 0.5);
-}
-
-.video-player.webrtc {
-  box-shadow: 0 0 20px rgba(76, 175, 80, 0.6);
-}
-
-.video-player.fallback {
-  box-shadow: 0 0 20px rgba(255, 193, 7, 0.5);
 }
 
 .video-player.placeholder {
@@ -647,7 +480,7 @@ onUnmounted(() => {
   cursor: pointer;
   transition: all 0.3s ease;
   margin-bottom: 2rem;
-  min-width: 180px;
+  min-width: 150px;
 }
 
 .control-btn:hover:not(:disabled) {
@@ -666,11 +499,6 @@ onUnmounted(() => {
 
 .control-btn.connected {
   background: linear-gradient(45deg, #27ae60, #2ecc71);
-}
-
-.control-btn.webrtc {
-  background: linear-gradient(45deg, #4caf50, #45a049);
-  box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
 }
 
 .connection-info {
@@ -719,10 +547,6 @@ onUnmounted(() => {
   .info-item {
     flex-direction: column;
     gap: 0.5rem;
-  }
-  
-  .control-btn {
-    min-width: 150px;
   }
 }
 </style> 
